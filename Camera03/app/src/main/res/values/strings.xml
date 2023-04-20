@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Camera03</string>
+    <string name="capture">capture</string>
+    <string name="ae">AE</string>
+    <string name="exp_time">Exp. Time:</string>
+    <string name="preference_file_key">com.graystone.camera03.preview</string>
+    <string name="preview_snapshot_count_key">preview_snapshot_count</string>
+    <string name="camera">camera</string>
+    <string name="restore">restore</string>
+</resources>
