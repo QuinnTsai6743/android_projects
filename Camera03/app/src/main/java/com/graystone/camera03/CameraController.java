@@ -339,7 +339,7 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
                 builder.setTag("Live-view");
                 builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO);
                 if (mAeOn) {
-                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
+                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH);
                     builder.set(CaptureRequest.CONTROL_AE_REGIONS, mAeRegions);
                 }
                 else {
