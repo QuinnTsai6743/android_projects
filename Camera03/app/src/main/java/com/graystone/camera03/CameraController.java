@@ -30,6 +30,8 @@ import android.view.Surface;
 import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 
+import com.graystone.camerautil.AeStatistic;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -326,16 +328,18 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
     }
 
     class LiveViewRunnable implements Runnable {
-        private final Surface mSurface;
-        LiveViewRunnable(Surface liveViewSurface) {
-            mSurface = liveViewSurface;
+        private final ArrayList<Surface> mSurfaceList;
+        LiveViewRunnable(ArrayList<Surface> surfaceList) {
+            mSurfaceList = surfaceList;
         }
         @Override
         public void run() {
             Log.i(TAG, "setRepeatingRequest()");
             try {
                 CaptureRequest.Builder builder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-                builder.addTarget(mSurface);
+                for (Surface surface: mSurfaceList) {
+                    builder.addTarget(surface);
+                }
                 builder.setTag("Live-view");
                 builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO);
                 if (mAeOn) {
@@ -373,9 +377,9 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
 
     private LiveViewRunnable mLiveViewRunnable;
 
-    public void startLiveView(Surface liveViewSurface) {
+    public void startLiveView(ArrayList<Surface> surfaceList) {
         Log.d(TAG, "startLiveView()");
-        mLiveViewRunnable = new LiveViewRunnable(liveViewSurface);
+        mLiveViewRunnable = new LiveViewRunnable(surfaceList);
         mCameraHandler.post(mLiveViewRunnable);
     }
 
@@ -524,6 +528,7 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
                     mCallback.onCaptureComplete(exposureTime, gain, result.getFrameNumber());
                 }
                 else if ("Live-view".equals(tag)) {
+                    AeStatistic.log(result, "AEC_STAT", 3);
                     long frameNo = result.getFrameNumber();
                     if (frameNo % 10 == 0) {
                         Long exposureTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);

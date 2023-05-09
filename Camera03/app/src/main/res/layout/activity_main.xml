@@ -30,6 +30,7 @@
             />
     </LinearLayout>
     <SurfaceView
+        android:id="@+id/bottomPanel"
         android:layout_width="1440px"
         android:layout_height="360px"
         app:layout_constraintBottom_toBottomOf="parent"
@@ -100,6 +101,18 @@
         app:layout_constraintLeft_toLeftOf="parent"
         >
     </Spinner>
+    <com.google.android.material.slider.Slider
+        android:id="@+id/sharpnessSlider"
+        android:layout_width="80sp"
+        android:layout_height="30sp"
+        android:valueFrom="0.0"
+        android:valueTo="4.0"
+        android:stepSize="1.0"
+        android:layout_marginTop="20sp"
+        app:thumbRadius="4sp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+        />
     <Spinner
         android:id="@+id/edgeMode"
         android:layout_width="wrap_content"
@@ -126,6 +139,15 @@
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <ImageButton
+        android:id="@+id/exposureLinesButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:src="@drawable/ic_baseline_density_small_24"
+        android:contentDescription="@string/exp_time"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintRight_toLeftOf="@id/isoContainer"
+        />
     <LinearLayout
         android:id="@+id/exposureTimeContainer"
         android:layout_width="wrap_content"
@@ -159,6 +181,7 @@
             android:src="@drawable/ic_baseline_keyboard_arrow_down_24" />
     </LinearLayout>
     <LinearLayout
+        android:id="@+id/isoContainer"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="vertical"

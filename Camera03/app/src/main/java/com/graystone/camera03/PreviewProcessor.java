@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.ImageFormat;
 import android.graphics.Paint;
+import android.hardware.camera2.params.OutputConfiguration;
 import android.media.Image;
 import android.media.ImageReader;
 import android.os.Handler;
@@ -18,6 +19,7 @@ import android.view.SurfaceView;
 import androidx.annotation.NonNull;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Locale;
 
 public class PreviewProcessor implements ImageReader.OnImageAvailableListener {
@@ -47,7 +49,11 @@ public class PreviewProcessor implements ImageReader.OnImageAvailableListener {
 //        mRotateMatrix.postRotate(90.0f);
     }
 
-
+    public ArrayList<OutputConfiguration> buildOutputList() {
+        ArrayList<OutputConfiguration> outputList = new ArrayList<>();
+        outputList.add(new OutputConfiguration(mImageReader.getSurface()));
+        return outputList;
+    }
 
     public Surface getSurface() {
         return mImageReader.getSurface();

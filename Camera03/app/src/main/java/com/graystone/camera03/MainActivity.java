@@ -26,6 +26,7 @@ import android.os.Message;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.util.Range;
+import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
@@ -39,6 +40,7 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.android.material.slider.Slider;
 import com.google.android.material.snackbar.Snackbar;
 
 import org.jetbrains.annotations.NotNull;
@@ -69,7 +71,8 @@ public class MainActivity extends AppCompatActivity implements CameraController.
 
     private boolean mSnapshotMode = false;
     private SurfaceView mSurfaceViewAux;
-    private PreviewProcessor mPreviewProcessor;
+    //private PreviewProcessor mPreviewProcessor;
+    private PreviewRawProcessor mPreviewRawProcessor;
     private boolean mUsingAuxView = true;
     private SnapshotProcessor mSnapshotProcessor;
     private CameraController mCameraController;
@@ -90,6 +93,7 @@ public class MainActivity extends AppCompatActivity implements CameraController.
 
     private InputDialog mExpTimeDialog;
     private InputDialog mIsoDialog;
+    private InputDialog mExpLineDialog;
 
     private boolean mCameraOpened = false;
     private ImageView mCameraBtn;
@@ -106,6 +110,8 @@ public class MainActivity extends AppCompatActivity implements CameraController.
 
     private Handler mHandler;
     private Handler mUiHandler;
+
+    private final SharpnessSliderListener mSharpnessSliderListener = new SharpnessSliderListener();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -139,6 +145,11 @@ public class MainActivity extends AppCompatActivity implements CameraController.
         mIconAwbOn = ResourcesCompat.getDrawable(getResources(), R.drawable.ic_baseline_settings_backup_restore_24, null);
         mIconAwbOff = ResourcesCompat.getDrawable(getResources(), R.drawable.ic_baseline_settings_backup_restore_on_24, null);
 
+        // Add Slider listeners
+        Slider sharpnessSlider = findViewById(R.id.sharpnessSlider);
+        sharpnessSlider.addOnSliderTouchListener(mSharpnessSliderListener);
+        sharpnessSlider.addOnChangeListener(mSharpnessSliderListener);
+
         createButtons();
 
 //        mOrientationEventListener = new OrientationEventListener(this) {
@@ -150,7 +161,6 @@ public class MainActivity extends AppCompatActivity implements CameraController.
 
         mSurfaceViewAux = findViewById(R.id.previewAux);
         mStreamController = new StreamController(this, this);
-//        mPreviewSnapshot = new Screenshot(streamController, mHandler);
 
         mTextView = findViewById(R.id.text1);
 
@@ -188,7 +198,7 @@ public class MainActivity extends AppCompatActivity implements CameraController.
             }
 
             CameraController.CameraAttrib cameraAttrib = arrayList.get(0); // Pick up the first camera
-//        CameraController.CameraAttrib cameraAttrib = arrayList.get(1); // Pick up the 2nd camera
+//            CameraController.CameraAttrib cameraAttrib = arrayList.get(1); // Pick up the 2nd camera
             mCameraId = cameraAttrib.getCameraId();
             Log.d(TAG, "Pick up the camera " + mCameraId);
 
@@ -204,13 +214,15 @@ public class MainActivity extends AppCompatActivity implements CameraController.
             Log.d(TAG, "Sensor Exposure Time Range: " + mExposureTimeRange);
             mExpTimeDialog.setMessage(String.format(Locale.US, "Valid range is\n%d ns ~ %d ns", mExposureTimeRange.getLower(), mExposureTimeRange.getUpper()));
             mIsoDialog.setMessage(String.format(Locale.US, "Valid range is\n%d ~ %d", mIsoRange.getLower(), mIsoRange.getUpper()));
+            mExpLineDialog.setMessage(String.format(Locale.US, "Valid range is\n1 ~ 2047"));
 
             cameraAttrib.dumpAllSupportedSize();
             Log.i(TAG, "Max Regions AWB: " + cameraAttrib.getMaxRegionsAwb());
             Log.i(TAG, "Max Regions  AE: " + cameraAttrib.getMaxRegionsAe());
             Log.i(TAG, "Flash Available: " + cameraAttrib.isFlashAvailable());
 
-            mPreviewProcessor = new PreviewProcessor(this, cameraAttrib, surfaceView, mHandler, mStreamController);
+            //mPreviewProcessor = new PreviewProcessor(this, cameraAttrib, surfaceView, mHandler, mStreamController);
+            mPreviewRawProcessor = new PreviewRawProcessor(this, cameraAttrib, surfaceView, mHandler, mStreamController);
             mSnapshotProcessor = new SnapshotProcessor(cameraAttrib, this, mHandler, mStreamController);
         }
     }
@@ -273,7 +285,8 @@ public class MainActivity extends AppCompatActivity implements CameraController.
             public void onClick(View v) {
                 Log.i(TAG, "BTN03 click");
                 if (!mUsingAuxView) {
-                    mPreviewProcessor.takeSnapshot();
+//                    mPreviewProcessor.takeSnapshot();
+                    mPreviewRawProcessor.takeSnapshot();
                 }
                 else {
                     new Screenshot(mStreamController, mHandler).capture(mSurfaceViewAux.getHolder());
@@ -320,6 +333,18 @@ public class MainActivity extends AppCompatActivity implements CameraController.
                 Log.i(TAG, "exposure-time icon click!");
                 if (mCameraOpened) {
                     mExpTimeDialog.show();
+                }
+            }
+        });
+
+        mExpLineDialog = new InputDialog(this, "ExpLineInputDialog", "Sensor Exposure Lines", this);
+        ImageButton expLineBtn = findViewById(R.id.exposureLinesButton);
+        expLineBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Log.i(TAG, "exposure lines button clicked!");
+                if (mCameraOpened) {
+                    mExpLineDialog.show();
                 }
             }
         });
@@ -509,10 +534,14 @@ public class MainActivity extends AppCompatActivity implements CameraController.
         }
         else {
             if (mUsingAuxView) {
-                mCameraController.startLiveView(mSurfaceViewAux.getHolder().getSurface());
+//                mCameraController.startLiveView(mSurfaceViewAux.getHolder().getSurface());
+                ArrayList<Surface> surfaceList = new ArrayList<>();
+                surfaceList.add(mSurfaceViewAux.getHolder().getSurface());
+                mCameraController.startLiveView(surfaceList);
             }
             else {
-                mCameraController.startLiveView(mPreviewProcessor.getSurface());
+//                mCameraController.startLiveView(mPreviewProcessor.getSurface());
+                mCameraController.startLiveView(mPreviewRawProcessor.getSurfaces());
             }
         }
     }
@@ -571,6 +600,18 @@ public class MainActivity extends AppCompatActivity implements CameraController.
                 e.printStackTrace();
             }
         }
+        else if ("ExpLineInputDialog".equals(tag)) {
+            Log.i(TAG, "Exposure Lines string=" + text);
+            try {
+                int lines = Integer.parseInt(text);
+                long exposureTime = Double.valueOf((lines * 1000000000.0) / (812.0 * 30.0)).longValue() + 1L;
+                mCameraController.setExposureTime(exposureTime);
+            }
+            catch (NumberFormatException e) {
+                Log.e(TAG, "NumberFormatException!");
+                e.printStackTrace();
+            }
+        }
     }
 
     @Override
@@ -604,14 +645,14 @@ public class MainActivity extends AppCompatActivity implements CameraController.
         @Override
         public void run() {
             double milli_sec = mExposureTime / 1e6;
-            int gain1 = mIso / 100;
-            int gain2 = mIso % 100;
+//            int gain1 = mIso / 100;
+//            int gain2 = mIso % 100;
             float[] cc = new float[] {
                     (float)mColorTransform[0]/mColorTransform[1], (float)mColorTransform[2]/mColorTransform[3], (float)mColorTransform[4]/mColorTransform[5],
                     (float)mColorTransform[6]/mColorTransform[7], (float)mColorTransform[8]/mColorTransform[9], (float)mColorTransform[10]/mColorTransform[11],
                     (float)mColorTransform[12]/mColorTransform[13], (float)mColorTransform[14]/mColorTransform[15], (float)mColorTransform[16]/mColorTransform[17]
             };
-            String info = String.format(Locale.US, " Exp. Time = %.4f ms\n Gain %d.%02d\n Frame Cnt. %d", milli_sec, gain1, gain2, mFrameNo) +
+            String info = String.format(Locale.US, " Exp.Time = %.4f ms\n Sensitivity %d\n Frame Cnt. %d", milli_sec, mIso, mFrameNo) +
                         String.format(Locale.US, "\n R %.2f  Gr %.2f Gb %.2f B %.2f (%s)", mGain[0], mGain[1], mGain[2], mGain[3], CameraInfo.AwbState(mAwbState)) +
                         String.format(Locale.US, "\n %6.4f %6.4f %6.4f", cc[0], cc[1], cc[2]) +
                         String.format(Locale.US, "\n %6.4f %6.4f %6.4f", cc[3], cc[4], cc[5]) +
@@ -675,14 +716,15 @@ public class MainActivity extends AppCompatActivity implements CameraController.
 
     private void createLiveViewSession() {
         mSnapshotMode = false;
-        ArrayList<OutputConfiguration> outputList = new ArrayList<>();
         if (mUsingAuxView) {
+            ArrayList<OutputConfiguration> outputList = new ArrayList<>();
             outputList.add(new OutputConfiguration(mSurfaceViewAux.getHolder().getSurface()));
+            mCameraController.startCameraSession(outputList);
         }
         else {
-            outputList.add(new OutputConfiguration(mPreviewProcessor.getSurface()));
+//            mCameraController.startCameraSession(mPreviewProcessor.buildOutputList());
+            mCameraController.startCameraSession(mPreviewRawProcessor.buildOutputList());
         }
-        mCameraController.startCameraSession(outputList);
     }
 
     private void startSnapshotSession() {
