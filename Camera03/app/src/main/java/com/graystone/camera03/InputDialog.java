@@ -8,8 +8,8 @@ import android.widget.EditText;
 public class InputDialog implements DialogInterface.OnClickListener {
 
     interface EventListener {
-        void OnOk(String text, String tag);
-        void OnCancel(String tag);
+        void onOkClick(String text, String tag);
+        void onCancelClick(String tag);
     }
 
     private final EditText mEditText;
@@ -42,10 +42,10 @@ public class InputDialog implements DialogInterface.OnClickListener {
     public void onClick(DialogInterface dialog, int which) {
         if (which == DialogInterface.BUTTON_POSITIVE) {
             String inputText = String.valueOf(mEditText.getText());
-            mListener.OnOk(inputText, mTag);
+            mListener.onOkClick(inputText, mTag);
         }
         else if (which == DialogInterface.BUTTON_NEGATIVE) {
-            mListener.OnCancel(mTag);
+            mListener.onCancelClick(mTag);
         }
     }
 }

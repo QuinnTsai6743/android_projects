@@ -33,12 +33,12 @@ import androidx.core.app.ActivityCompat;
 import com.graystone.camerautil.AeStatistic;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Executor;
 
-public class CameraController implements Executor, IEdgeMode, INoiseReduction {
+public class CameraController implements Executor, IEdgeMode, INoiseReduction, ICameraControl {
     public interface StateCallback {
         void onCameraOpened();
         void onCameraError();
@@ -79,6 +79,10 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
 
         public Rect getSensorActiveArraySize() {
             return mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+        }
+
+        public int getSensorColorFilter() {
+            return mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT);
         }
 
         public StreamConfigurationMap getStreamConfigurationMap() {
@@ -133,9 +137,25 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
         public Boolean isFlashAvailable() {
             return mCharacteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
         }
+
+        public void dumpDistortionCorrectionMode() {
+            int [] modes = mCharacteristics.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES);
+            if (modes == null) {
+                Log.i(TAG, "No Distortion Correction");
+            }
+            else {
+                Log.i(TAG, String.format("Supported Distortion Correction mode (%d)", modes.length));
+                for (int ii : modes) {
+                    Log.i(TAG, String.format("  %d", ii));
+                }
+            }
+        }
     }
 
     private static final String TAG = "Camera03";
+    private static final String OneShotTag = "OneShot";
+    private static final String LiveViewTag = "Live-View";
+    private static final String SnapShotTag = "SnapShot";
     private static final long CAMERA_CLOSE_TIMEOUT = 2000; // ms
     private final Handler mCameraHandler;
     private CameraManager mCameraManager = null;
@@ -151,14 +171,33 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
             new MeteringRectangle(309, 309, 100, 100, MeteringRectangle.METERING_WEIGHT_MAX)
     };
 
-
     private final ConditionVariable mCloseWaiter = new ConditionVariable();
     private final StateCallback mCallback;
 
     private Integer mEdgeMode = CaptureRequest.EDGE_MODE_OFF;
     private Integer mNoiseReductionMode = CaptureRequest.NOISE_REDUCTION_MODE_OFF;
 
-    private boolean mWbReset = false;
+    private boolean mFixedWBGains = false;
+    private RggbChannelVector mWbGains;
+
+    private boolean mSceneMode = false;
+
+    private boolean mDumpCaptureRequestTags = false;
+
+    private int [] mColorMatrixElements = null;
+    private final ColorCorrectionController mColorCorrectionController = new ColorCorrectionController();
+
+    private final ToneCurveController mToneMapCurveController = new ToneCurveController();
+    private int mBrightnessLevel = 0;
+    private int mContrastLevel = 0;
+
+    private int mSharpnessLevel = 0;
+    private static final CaptureRequest.Key<int[]> mSharpnessStrengthKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.sharpness.strength", int[].class);
+
+    private int mSaturationLevel = 5;
+    private static final CaptureRequest.Key<int[]> mUseSaturationKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.saturation.use_saturation", int[].class);
+
+    private static final CaptureRequest.Key<int[]> mContrastLevelKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.contrast.level", int[].class);
 
     CameraController(StateCallback callback) {
         HandlerThread cameraThread = new HandlerThread("cameraThread");
@@ -228,10 +267,22 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
         buildAndSendLiveViewRequest();
     }
 
-    public boolean isAeOn() {
+    /**
+     * ICameraControl
+     * Get the AE status.
+     * @return Ture if AE is enabled.
+     */
+    @Override
+    public boolean autoExposureEnabled() {
         return mAeOn;
     }
 
+    /**
+     * ICameraControl
+     * Set the ISO value
+     * @param iso ISO value.
+     */
+    @Override
     public void setIso(int iso) {
         if (iso != mIso) {
             mIso = iso;
@@ -239,10 +290,17 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
         }
     }
 
+    /**
+     * ICameraControl
+     * Get the current ISO value.
+     * @return ISO value.
+     */
+    @Override
     public int getIso() {
         return mIso;
     }
 
+    @Override
     public void setExposureTime(long nanosecond) {
         if (mExposureTime != nanosecond) {
             mExposureTime = nanosecond;
@@ -250,8 +308,62 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
         }
     }
 
+    /**
+     * ICameraControl
+     * Get the current exposure time. (unit is nanoseconds)
+     * @return The exposure time.
+     */
+    @Override
     public long getExposureTime() {
         return mExposureTime;
+    }
+
+    /**
+     * ICameraControl
+     * @param level The new saturation level.
+     */
+    @Override
+    public void setSaturationLevel(int level) {
+        Log.d(TAG, "[Camera] set saturation: " + level);
+        mSaturationLevel = level;
+        buildAndSendLiveViewRequest();
+    }
+
+    /**
+     * ICameraControl
+     * @param level The new brightness level.
+     */
+    @Override
+    public void setBrightnessLevel(int level) {
+//        Log.d(TAG, String.format("[Camera] brightness = %d", level));
+//        mBrightnessLevel = level;
+        Log.d(TAG, String.format("[Camera] shaprness = %d", level));
+        mSharpnessLevel = level;
+        buildAndSendLiveViewRequest();
+    }
+
+    /**
+     * ICameraControl
+     * @param level The new contrast level.
+     */
+    @Override
+    public void setContrastLevel(int level) {
+        Log.d(TAG, String.format("[Camera] contrast = %d", level));
+        mContrastLevel = level;
+        buildAndSendLiveViewRequest();
+    }
+
+    /**
+     * ICameraControl
+     * @param brightness The brightness level.
+     * @param contrast The contrast level.
+     */
+    @Override
+    public void setBrightnessAndContrast(int brightness, int contrast) {
+        Log.d(TAG, String.format("[Camera] brightness = %d, contrast = %d", brightness, contrast));
+        mBrightnessLevel = brightness;
+        mContrastLevel = contrast;
+        buildAndSendLiveViewRequest();
     }
 
     /**
@@ -289,6 +401,18 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
                     outputList,
                     this,
                     mCameraSessionListener);
+
+            // Test EIS and LDC
+            CaptureRequest.Builder builder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+
+            CaptureRequest.Key<int[]> EisEnableKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.sessionParameters.EisEnable", int[].class);
+            builder.set(EisEnableKey, new int [] {1});
+
+            CaptureRequest.Key<int []> LdcEnableKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.sessionParameters.LDCEnable", int[].class);
+            builder.set(LdcEnableKey, new int [] {1});
+
+            config.setSessionParameters(builder.build());
+
             mCameraDevice.createCaptureSession(config);
         }
         catch (CameraAccessException e) {
@@ -327,11 +451,96 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
         }
     }
 
+    private void applyLiveViewRequest(CaptureRequest.Builder builder) {
+        if (mSceneMode) {
+            builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_USE_SCENE_MODE);
+            builder.set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_NIGHT);
+            Log.d(TAG, "set scene mode to NIGHT");
+        }
+        else {
+//                    builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_USE_SCENE_MODE);
+//                    builder.set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_DISABLED);
+//                    mCameraSession.setRepeatingRequest(builder.build(), mCaptureCallback, mCameraHandler);
+//                    try {
+//                        Thread.sleep(1000);
+//                    }
+//                    catch (InterruptedException e) {
+//                        e.printStackTrace();
+//                    }
+            Log.d(TAG, "Control Mode: Auto");
+            builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO);
+        }
+        if (mAeOn) {
+            builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH);
+            builder.set(CaptureRequest.CONTROL_AE_REGIONS, mAeRegions);
+        }
+        else {
+            builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
+            builder.set(CaptureRequest.SENSOR_SENSITIVITY, mIso);
+            builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, mExposureTime);
+        }
+        // awb mode
+        if (!mFixedWBGains) {
+            builder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO);
+        }
+        else {
+            builder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_OFF);
+            builder.set(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX);
+            builder.set(CaptureRequest.COLOR_CORRECTION_GAINS, mWbGains);
+//            if (mColorMatrixElements != null) {
+//                float saturation = 1.0f + (mSaturationLevel / 5.0f);
+//                ColorSpaceTransform colorSpaceTransform = new ColorSpaceTransform(mColorCorrectionController.getAdaptedColorSpaceTransform(mColorMatrixElements, saturation));
+////                builder.set(CaptureRequest.COLOR_CORRECTION_TRANSFORM, ColorCorrectionController.getColorSpaceTransform(mSaturationLevel));
+//                builder.set(CaptureRequest.COLOR_CORRECTION_TRANSFORM, colorSpaceTransform);
+//            }
+        }
+
+        // edge mode
+        builder.set(CaptureRequest.EDGE_MODE, mEdgeMode);
+        // noise reduction mode
+        builder.set(CaptureRequest.NOISE_REDUCTION_MODE, mNoiseReductionMode);
+
+        // Tone Map Curve
+        builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE);
+        builder.set(CaptureRequest.TONEMAP_CURVE, mToneMapCurveController.getToneMapCurve(mBrightnessLevel, mContrastLevel));
+//        builder.set(mContrastLevelKey, new int [] {mContrastLevel});
+
+        // Testing sharpness strength
+        builder.set(mSharpnessStrengthKey, new int [] {mSharpnessLevel});
+
+        // Testing UseSaturation
+        builder.set(mUseSaturationKey, new int [] {mSaturationLevel});
+
+        // Testing EIS
+//        CaptureRequest.Key<int[]> EisEnableKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.sessionParameters.EisEnable", int[].class);
+//        builder.set(EisEnableKey, new int [] {0});
+//
+//        CaptureRequest.Key<int []> LdcEnableKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.sessionParameters.LDCEnable", int[].class);
+//        builder.set(LdcEnableKey, new int [] {0});
+    }
+
     class LiveViewRunnable implements Runnable {
         private final ArrayList<Surface> mSurfaceList;
         LiveViewRunnable(ArrayList<Surface> surfaceList) {
             mSurfaceList = surfaceList;
         }
+
+        void dumpIntValues(int [] values) {
+            StringBuilder strBuilder = new StringBuilder(String.format(Locale.US, " (size: %d)  ", values.length));
+            for (int v : values) {
+                strBuilder.append(String.format(Locale.US, "%d ", v));
+            }
+            Log.i(TAG, strBuilder.toString());
+        }
+
+        void dumpByteValues(byte [] values) {
+            StringBuilder strBuilder = new StringBuilder(String.format(Locale.US, " (size: %d)  ", values.length));
+            for (byte v : values) {
+                strBuilder.append(String.format(Locale.US, "0x%02x ", v));
+            }
+            Log.i(TAG, strBuilder.toString());
+        }
+
         @Override
         public void run() {
             Log.i(TAG, "setRepeatingRequest()");
@@ -340,34 +549,23 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
                 for (Surface surface: mSurfaceList) {
                     builder.addTarget(surface);
                 }
-                builder.setTag("Live-view");
-                builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO);
-                if (mAeOn) {
-                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH);
-                    builder.set(CaptureRequest.CONTROL_AE_REGIONS, mAeRegions);
+                builder.setTag(LiveViewTag);
+                applyLiveViewRequest(builder);
+                CaptureRequest request = builder.build();
+                if (mDumpCaptureRequestTags) {
+                    List<CaptureRequest.Key<?>> keyList = request.getKeys();
+                    Log.i(TAG, String.format("----- get %d keys ---------------", keyList.size()));
+                    for (CaptureRequest.Key<?> k : keyList) {
+                        Object o = request.get(k);
+                        Log.i(TAG, " Key: " + k.getName() + String.format("   Value (%s): %s", o.getClass().getSimpleName(), o.toString()));
+                        if (o.getClass().getSimpleName().equals(int[].class.getSimpleName())) {
+                            dumpIntValues((int[]) o);
+                        } else if (o.getClass().getSimpleName().equals(byte[].class.getSimpleName())) {
+                            dumpByteValues((byte[]) o);
+                        }
+                    }
                 }
-                else {
-                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
-                    builder.set(CaptureRequest.SENSOR_SENSITIVITY, mIso);
-                    builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, mExposureTime);
-                }
-                // awb mode
-                if (!mWbReset) {
-                    builder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO);
-                }
-                else {
-                    Log.d(TAG, "WB gains: 1.0, 1.0, 1.0, 1.0");
-                    builder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_OFF);
-                    builder.set(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX);
-                    builder.set(CaptureRequest.COLOR_CORRECTION_GAINS, new RggbChannelVector(1.0f, 1.0f, 1.0f, 1.0f));
-                }
-
-                // edge mode
-                builder.set(CaptureRequest.EDGE_MODE, mEdgeMode);
-                // noise reduction mode
-                builder.set(CaptureRequest.NOISE_REDUCTION_MODE, mNoiseReductionMode);
-
-                mCameraSession.setRepeatingRequest(builder.build(), mCaptureCallback, mCameraHandler);
+                mCameraSession.setRepeatingRequest(request, mCaptureCallback, mCameraHandler);
             }
             catch (CameraAccessException e) {
                 e.printStackTrace();
@@ -399,7 +597,7 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
             try {
                 CaptureRequest.Builder builder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
                 builder.addTarget(mSurface);
-                builder.setTag("Snapshot");
+                builder.setTag(SnapShotTag);
 
                 builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
                 builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, mExposureTime);    // nanoseconds
@@ -421,6 +619,58 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
         mIso = iso;
         mExposureTime = exposureTime;
         mCameraHandler.post(new SnapshotRunnable(snapshotSurface));
+    }
+
+    /**
+     * OneShot capture.
+     *
+     */
+    class OneShotRunnable implements Runnable {
+        private final Surface mSurface;
+
+        OneShotRunnable(Surface surface) {
+            mSurface = surface;
+        }
+
+        @Override
+        public void run() {
+            try {
+                CaptureRequest.Builder builder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+                builder.addTarget(mSurface);
+                builder.setTag(OneShotTag);
+
+                applyLiveViewRequest(builder);
+//                mCameraSession.capture(builder.build(), mCaptureCallback, mCameraHandler);
+                mCameraSession.setRepeatingRequest(builder.build(), mCaptureCallback, mCameraHandler);
+            }
+            catch (CameraAccessException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public void oneShotRequest(Surface snapshotSurface) {
+        Log.i(TAG, "[CameraController] oneshotRequest");
+        mCameraHandler.post(new OneShotRunnable(snapshotSurface));
+    }
+
+    public void setSceneMode(int mode) {
+        if (mode == 0) {
+            mSceneMode = false;
+        }
+        else {
+            mSceneMode = true;
+        }
+        buildAndSendLiveViewRequest();
+    }
+
+    public int getSceneMode() {
+        if (mSceneMode) {
+            return 1;
+        }
+        else {
+            return 0;
+        }
     }
 
     private final CameraDevice.StateCallback mCameraDeviceListener = new CameraDevice.StateCallback() {
@@ -486,6 +736,10 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
         }
     };
 
+    /**
+     * Camera Session Capture Callback handler
+     *
+     */
     private final CameraCaptureSession.CaptureCallback mCaptureCallback = new CameraCaptureSession.CaptureCallback() {
         static final long MICRO_SECOND = 1000;
         static final long MILLI_SECOND = MICRO_SECOND * 1000;
@@ -519,7 +773,7 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
             super.onCaptureCompleted(session, request, result);
             String tag = (String)request.getTag();
             if (tag != null) {
-                if ("Snapshot".equals(tag)) {
+                if (SnapShotTag.equals(tag)) {
                     Log.i(TAG, "Snapshot completed! frame no.= " + result.getFrameNumber());
                     Long exposureTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
                     Integer gain = result.get(CaptureResult.SENSOR_SENSITIVITY);
@@ -527,14 +781,12 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
                     Log.i(TAG, String.format("ISO = %d", gain));
                     mCallback.onCaptureComplete(exposureTime, gain, result.getFrameNumber());
                 }
-                else if ("Live-view".equals(tag)) {
-                    AeStatistic.log(result, "AEC_STAT", 3);
+                else if (LiveViewTag.equals(tag)) {
+                    AeStatistic.log(result, "CAP_STAT", 10);
                     long frameNo = result.getFrameNumber();
                     if (frameNo % 10 == 0) {
                         Long exposureTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
                         Integer iso = result.get(CaptureResult.SENSOR_SENSITIVITY);
-//                        RggbChannelVector vector = result.get(CaptureResult.COLOR_CORRECTION_GAINS);
-//                        ColorSpaceTransform transform = result.get(CaptureResult.COLOR_CORRECTION_TRANSFORM);
                         CapResult.Builder builder = new CapResult.Builder()
                                 .setIso(iso)
                                 .setExposureTime(exposureTime)
@@ -551,6 +803,18 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
                         }
 //                        Log.i(TAG, "Frame no. " + frameNo + " | iso:" + iso + " exp.:" + exposureTime);
                     }
+
+                    // for Contrast and Saturation adjustment
+                    if (mColorMatrixElements == null) {
+                        ColorSpaceTransform colorSpaceTransform = result.get(CaptureResult.COLOR_CORRECTION_TRANSFORM);
+                        if (colorSpaceTransform != null) {
+                            mColorMatrixElements = new int[18];
+                            colorSpaceTransform.copyElements(mColorMatrixElements, 0);
+                        }
+                    }
+                }
+                else if (OneShotTag.equals(tag)) {
+                    Log.i(TAG, "OneShot completed! frame No.= " + result.getFrameNumber());
                 }
             }
         }
@@ -638,13 +902,18 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction {
         return new String[]{"OFF", "FAST", "HIGH_QUALITY", "MINIMAL", "ZERO_SHUTTER_LAG"};
     }
 
-    public void resetWbGains(boolean reset) {
-        Log.d(TAG, "<CameraController> resetWbGains " + reset);
-        mWbReset = reset;
+    public void fixedWBGains(float gainR, float gainB) {
+        Log.d(TAG, String.format("<CameraController> fixedWBGains, R:%f  B:%f ", gainR, gainB));
+        mFixedWBGains = true;
+        mWbGains = new RggbChannelVector(gainR, 1.0f, 1.0f, gainB);
         buildAndSendLiveViewRequest();
     }
 
-    public boolean isWbGainsReset() {
-        return mWbReset;
+    public void autoWB() {
+        mFixedWBGains = false;
+    }
+
+    public boolean isWBGainsFixed() {
+        return mFixedWBGains;
     }
 }

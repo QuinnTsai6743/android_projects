@@ -19,7 +19,7 @@
             android:configChanges="orientation|screenSize"
             android:exported="true"
             android:theme="@style/Theme.Camera03.NoActionBar"
-            android:screenOrientation="landscape">
+            android:screenOrientation="nosensor">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 

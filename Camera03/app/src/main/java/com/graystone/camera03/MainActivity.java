@@ -8,8 +8,10 @@ import androidx.core.content.res.ResourcesCompat;
 import android.Manifest;
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -56,10 +58,12 @@ public class MainActivity extends AppCompatActivity implements CameraController.
         SensorEventListener,
         AdapterView.OnItemSelectedListener,
         InputDialog.EventListener,
-        StreamController.OnWriteFileDoneListener {
+        StreamController.OnWriteFileDoneListener
+{
 
     private static final String TAG = "Camera03";
     private static final int REQUEST_PERMISSIONS_REQUEST_CODE = 34;
+    private static final double NANOSECONDS_PER_SECOND = 1000000000.0;
 
     private SensorManager mSensorManager;
     private final float[] mAccelerometerReading = new float[3];
@@ -70,10 +74,11 @@ public class MainActivity extends AppCompatActivity implements CameraController.
 //    private OrientationEventListener mOrientationEventListener;
 
     private boolean mSnapshotMode = false;
+    private SurfaceView mPreviewSurface;
     private SurfaceView mSurfaceViewAux;
     //private PreviewProcessor mPreviewProcessor;
     private PreviewRawProcessor mPreviewRawProcessor;
-    private boolean mUsingAuxView = true;
+    private boolean mUsingAuxView = false;
     private SnapshotProcessor mSnapshotProcessor;
     private CameraController mCameraController;
     private String mCameraId;
@@ -105,17 +110,27 @@ public class MainActivity extends AppCompatActivity implements CameraController.
     private Drawable mIconAwbOn;
     private Drawable mIconAwbOff;
 
+    private ImageButton mFilterBtn;
+    private Drawable mIconFilterOn;
+    private Drawable mIconFilterOff;
+
 //    private Screenshot mPreviewSnapshot;
     private StreamController mStreamController;
+
+    private AWBCalculator mAwbCalculator;
 
     private Handler mHandler;
     private Handler mUiHandler;
 
-    private final SharpnessSliderListener mSharpnessSliderListener = new SharpnessSliderListener();
+    private final SliderListener mSliderListener = new SliderListener();
+
+    private final ExposureTimeHandler mExpTimeHandler = new ExposureTimeHandler();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
 
         HandlerThread handlerThread = new HandlerThread("AuxThread");
         handlerThread.start();
@@ -144,11 +159,49 @@ public class MainActivity extends AppCompatActivity implements CameraController.
 //        mIconCameraOff = Icon.createWithResource(this, R.drawable.ic_baseline_camera_alt_off_24);
         mIconAwbOn = ResourcesCompat.getDrawable(getResources(), R.drawable.ic_baseline_settings_backup_restore_24, null);
         mIconAwbOff = ResourcesCompat.getDrawable(getResources(), R.drawable.ic_baseline_settings_backup_restore_on_24, null);
+        mIconFilterOn = ResourcesCompat.getDrawable(getResources(), R.drawable.ic_baseline_photo_filter_blue_24, null);
+        mIconFilterOff = ResourcesCompat.getDrawable(getResources(), R.drawable.ic_baseline_photo_filter_24, null);
+
 
         // Add Slider listeners
-        Slider sharpnessSlider = findViewById(R.id.sharpnessSlider);
-        sharpnessSlider.addOnSliderTouchListener(mSharpnessSliderListener);
-        sharpnessSlider.addOnChangeListener(mSharpnessSliderListener);
+        // **********
+        // Saturation Slider
+        Slider saturationSlider = findViewById(R.id.saturationSlider);
+        String saturationSliderName = getResources().getResourceEntryName(saturationSlider.getId());
+//        saturationSlider.setVisibility(View.INVISIBLE);  // hide the widget
+        mSliderListener.addHandleFunction(saturationSliderName, value -> {
+            int level = Float.valueOf(value).intValue();
+            Log.d(TAG, "Saturation level=" + level);
+            mCameraController.setSaturationLevel(level);
+        });
+        saturationSlider.setValue(5.0f);
+        saturationSlider.addOnSliderTouchListener(mSliderListener);
+        saturationSlider.addOnChangeListener(mSliderListener);
+
+        // **********
+        // Contrast Slider
+        Slider contrastSlider = findViewById(R.id.contrastSlider);
+        String contrastSliderName = getResources().getResourceEntryName(contrastSlider.getId());
+        mSliderListener.addHandleFunction(contrastSliderName, value -> {
+            int level = Float.valueOf(value).intValue();
+            Log.d(TAG, "Contrast level=" + level);
+            mCameraController.setContrastLevel(level);
+        });
+//        contrastSlider.addOnSliderTouchListener(mSliderListener);
+        contrastSlider.setValue(0.0f);
+        contrastSlider.addOnChangeListener(mSliderListener);
+
+        // **********
+        // Brightness Slider
+        Slider brightnessSlider = findViewById(R.id.brightnessSlider);
+        String brightnessSliderName = getResources().getResourceEntryName(brightnessSlider.getId());
+        mSliderListener.addHandleFunction(brightnessSliderName, value -> {
+            int level = Float.valueOf(value).intValue();
+            Log.d(TAG, "Brightness level=" + level);
+            mCameraController.setBrightnessLevel(level);
+        });
+        brightnessSlider.setValue(0.0f);
+        brightnessSlider.addOnChangeListener(mSliderListener);
 
         createButtons();
 
@@ -160,12 +213,14 @@ public class MainActivity extends AppCompatActivity implements CameraController.
 //        };
 
         mSurfaceViewAux = findViewById(R.id.previewAux);
+        mPreviewSurface = findViewById(R.id.preview);
+        mPreviewSurface.getHolder().addCallback(this);
+
+        // Create a StreamController for image capturing
         mStreamController = new StreamController(this, this);
 
+        // Get the text view for displaying debug information
         mTextView = findViewById(R.id.text1);
-
-        SurfaceView surfaceView = findViewById(R.id.preview);
-        surfaceView.getHolder().addCallback(this);
 
         Spinner spinner = findViewById(R.id.imageFormat);
         ArrayAdapter<CharSequence> adapter = new ArrayAdapter<CharSequence>(this, R.layout.spinner_item, new String[]{"RAW", "JPEG"});
@@ -176,11 +231,9 @@ public class MainActivity extends AppCompatActivity implements CameraController.
         mExposureTimeRange = new Range<Long>(1000000L, 60000000L);
         mIsoRange = new Range<Integer>(100, 400);
 
-        if (!checkCameraPermissions()) {
-            requestCameraPermissions();
-        }
-
         mCameraController = new CameraController(this);
+        mExpTimeHandler.setCameraControl(mCameraController);
+
         new EdgeModeHandler(findViewById(R.id.edgeMode),
                 new ArrayAdapter<CharSequence>(this, R.layout.spinner_item, mCameraController.getSupportEdgeMode()),
                 mCameraController);
@@ -188,55 +241,34 @@ public class MainActivity extends AppCompatActivity implements CameraController.
                 new ArrayAdapter<CharSequence>(this, R.layout.spinner_item, mCameraController.getSupportNoiseReductionMode()),
                 mCameraController);
 
-        ArrayList<CameraController.CameraAttrib> arrayList = mCameraController.findCamera(getApplicationContext());
-        Log.d(TAG, "Num of cameras: " + arrayList.size());
-        if (arrayList.size() > 0) {
-            for (CameraController.CameraAttrib c : arrayList) {
-                Log.d(TAG, "Camera id: " + c.getCameraId());
-                Log.d(TAG, " LENS FACING: " + c.getLensFacing());
-                Log.d(TAG, " SENSOR ARRAY: " + c.getSensorActiveArraySize());
-            }
-
-            CameraController.CameraAttrib cameraAttrib = arrayList.get(0); // Pick up the first camera
-//            CameraController.CameraAttrib cameraAttrib = arrayList.get(1); // Pick up the 2nd camera
-            mCameraId = cameraAttrib.getCameraId();
-            Log.d(TAG, "Pick up the camera " + mCameraId);
-
-            Range<Long> exposureTimeRange = cameraAttrib.getExposureTimeRange();
-            if (exposureTimeRange != null) {
-                mExposureTimeRange = exposureTimeRange;
-            }
-            Range<Integer> isoRange = cameraAttrib.getSensitivityRange();
-            if (isoRange != null) {
-                mIsoRange = isoRange;
-            }
-            Log.d(TAG, "Sensor Sensitivity Range: " + mIsoRange);
-            Log.d(TAG, "Sensor Exposure Time Range: " + mExposureTimeRange);
-            mExpTimeDialog.setMessage(String.format(Locale.US, "Valid range is\n%d ns ~ %d ns", mExposureTimeRange.getLower(), mExposureTimeRange.getUpper()));
-            mIsoDialog.setMessage(String.format(Locale.US, "Valid range is\n%d ~ %d", mIsoRange.getLower(), mIsoRange.getUpper()));
-            mExpLineDialog.setMessage(String.format(Locale.US, "Valid range is\n1 ~ 2047"));
-
-            cameraAttrib.dumpAllSupportedSize();
-            Log.i(TAG, "Max Regions AWB: " + cameraAttrib.getMaxRegionsAwb());
-            Log.i(TAG, "Max Regions  AE: " + cameraAttrib.getMaxRegionsAe());
-            Log.i(TAG, "Flash Available: " + cameraAttrib.isFlashAvailable());
-
-            //mPreviewProcessor = new PreviewProcessor(this, cameraAttrib, surfaceView, mHandler, mStreamController);
-            mPreviewRawProcessor = new PreviewRawProcessor(this, cameraAttrib, surfaceView, mHandler, mStreamController);
-            mSnapshotProcessor = new SnapshotProcessor(cameraAttrib, this, mHandler, mStreamController);
+        if (!checkCameraPermissions()) {
+            requestCameraPermissions();
         }
     }
 
+    /**
+     * Create UI buttons
+     *
+     */
     private void createButtons() {
+        // *****
+        // Snapshot button
         ImageView btn00 = findViewById(R.id.btn0);
         btn00.setOnClickListener(
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
-                        startSnapshotSession();
+                        if (!mUsingAuxView) {
+                            mPreviewRawProcessor.takeSnapShot();
+                        }
+                        else {
+                            startSnapshotSession();
+                        }
                     }
                 });
 
+        // *****
+        // AE Lock button
         mAELockBtn = findViewById(R.id.btn1);
         mAELockBtn.setOnClickListener(
                 new View.OnClickListener() {
@@ -253,22 +285,26 @@ public class MainActivity extends AppCompatActivity implements CameraController.
                     }
                 });
 
+        // *****
+        // AWB Lock button
         mAwbBtn = findViewById(R.id.btn1_2);
         mAwbBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 Log.i(TAG, "<btn1_2 clicked>");
-                if (mCameraController.isWbGainsReset()) {
+                if (mCameraController.isWBGainsFixed()) {
                     mAwbBtn.setImageDrawable(mIconAwbOn);
-                    mCameraController.resetWbGains(false);
+                    mCameraController.autoWB();
                 }
                 else {
                     mAwbBtn.setImageDrawable(mIconAwbOff);
-                    mCameraController.resetWbGains(true);
+                    mCameraController.fixedWBGains(1.5f, 1.5f);
                 }
             }
         });
 
+        // *****
+        // Preview Switch button
         ImageButton btn02 = findViewById(R.id.btn2);
         btn02.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -279,14 +315,16 @@ public class MainActivity extends AppCompatActivity implements CameraController.
             }
         });
 
+        // *****
+        // Snapshot button for taking a RAW image
         ImageButton btn03 = findViewById(R.id.btn3);
         btn03.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 Log.i(TAG, "BTN03 click");
                 if (!mUsingAuxView) {
-//                    mPreviewProcessor.takeSnapshot();
-                    mPreviewRawProcessor.takeSnapshot();
+                    Log.i(TAG, "### Capture RAW ###");
+                    mPreviewRawProcessor.takeSnapShot();
                 }
                 else {
                     new Screenshot(mStreamController, mHandler).capture(mSurfaceViewAux.getHolder());
@@ -295,20 +333,38 @@ public class MainActivity extends AppCompatActivity implements CameraController.
             }
         });
 
+        // *****
+        // Open Camera button
         mCameraBtn = findViewById(R.id.btn4);
         mCameraBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 if (!mCameraController.isCameraOpened()) {
-                    mCameraController.openCamera(mCameraId);
-                    mCameraOpened = true;
-                }
-                if (mCameraOpened) {
-                    mCameraBtn.setImageDrawable(mIconCameraOn);
+                    findAndOpenCamera();
                 }
                 else {
-                    mCameraBtn.setImageDrawable(mIconCameraOff);
+                    mCameraController.closeCameraAndWait();
+                    mCameraOpened = false;
                 }
+                updateCameraButtonStatus();
+            }
+        });
+
+        // *****
+        // Filter button
+        mFilterBtn = findViewById(R.id.btn5);
+        mFilterBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+//                int sceneMode = mCameraController.getSceneMode();
+//                if (sceneMode == 0) {
+//                    mCameraController.setSceneMode(1);
+//                }
+//                else {
+//                    mCameraController.setSceneMode(0);
+//                }
+//                updateFilterButton();
+                mPreviewRawProcessor.takeRawInMemory(mTakeRawCallback);
             }
         });
 
@@ -337,7 +393,7 @@ public class MainActivity extends AppCompatActivity implements CameraController.
             }
         });
 
-        mExpLineDialog = new InputDialog(this, "ExpLineInputDialog", "Sensor Exposure Lines", this);
+        mExpLineDialog = new InputDialog(this, "ExpLineInputDialog", "Sensor Exposure Lines", mExpTimeHandler);
         ImageButton expLineBtn = findViewById(R.id.exposureLinesButton);
         expLineBtn.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -374,29 +430,101 @@ public class MainActivity extends AppCompatActivity implements CameraController.
                 }
         );
         ImageView expInc = findViewById(R.id.btnExpInc);
-        expInc.setOnClickListener(
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        if (mCameraOpened) {
-                            long expTime = mCameraController.getExposureTime();
-                            mCameraController.setExposureTime(mExposureTimeRange.clamp(expTime + 500000));
-                        }
-                    }
-                }
-        );
+        expInc.setOnClickListener(mExpTimeHandler);
+
         ImageView expDec = findViewById(R.id.btnExpDec);
-        expDec.setOnClickListener(
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        if (mCameraOpened) {
-                            long expTime = mCameraController.getExposureTime();
-                            mCameraController.setExposureTime(mExposureTimeRange.clamp(expTime - 500000));
-                        }
-                    }
+        expDec.setOnClickListener(mExpTimeHandler);
+    }
+
+    private void updateCameraButtonStatus() {
+        if (mCameraOpened) {
+            mCameraBtn.setImageDrawable(mIconCameraOn);
+        }
+        else {
+            mCameraBtn.setImageDrawable(mIconCameraOff);
+        }
+    }
+
+    private void updateFilterButton() {
+        int sceneMode = mCameraController.getSceneMode();
+        if (sceneMode == 0) {
+            mFilterBtn.setImageDrawable(mIconFilterOff);
+        }
+        else {
+            mFilterBtn.setImageDrawable(mIconFilterOn);
+        }
+    }
+
+    /**
+     * Find and open the camera if it exists.
+     *
+     */
+    private void findAndOpenCamera() {
+        if (!checkCameraPermissions()) {
+            requestCameraPermissions();
+        }
+        else {
+            ArrayList<CameraController.CameraAttrib> arrayList = mCameraController.findCamera(getApplicationContext());
+            Log.d(TAG, "Num of cameras: " + arrayList.size());
+            dumpCameraCharacteristic(arrayList);
+
+            if (arrayList.size() > 0) {
+                CameraController.CameraAttrib cameraAttrib = arrayList.get(0); // Pick up the 1st camera
+                mCameraId = cameraAttrib.getCameraId();
+                Log.d(TAG, "Pick up the camera " + mCameraId);
+
+                Range<Long> exposureTimeRange = cameraAttrib.getExposureTimeRange();
+                if (exposureTimeRange != null) {
+                    mExposureTimeRange = exposureTimeRange;
                 }
-        );
+                Range<Integer> isoRange = cameraAttrib.getSensitivityRange();
+                if (isoRange != null) {
+                    mIsoRange = isoRange;
+                }
+                Log.d(TAG, "Sensor Sensitivity Range: " + mIsoRange);
+                Log.d(TAG, "Sensor Exposure Time Range: " + mExposureTimeRange);
+
+                mExpTimeDialog.setMessage(String.format(Locale.US, "Valid range is\n%d ns ~ %d ns", mExposureTimeRange.getLower(), mExposureTimeRange.getUpper()));
+                mIsoDialog.setMessage(String.format(Locale.US, "Valid range is\n%d ~ %d", mIsoRange.getLower(), mIsoRange.getUpper()));
+                mExpLineDialog.setMessage("Input the exposure lines\n");
+
+                cameraAttrib.dumpAllSupportedSize();
+                Log.i(TAG, "Max Regions AWB: " + cameraAttrib.getMaxRegionsAwb());
+                Log.i(TAG, "Max Regions  AE: " + cameraAttrib.getMaxRegionsAe());
+                Log.i(TAG, "Flash Available: " + cameraAttrib.isFlashAvailable());
+
+                cameraAttrib.dumpDistortionCorrectionMode();
+
+                Rect sensorArraySize = cameraAttrib.getSensorActiveArraySize();
+                mAwbCalculator = new AWBCalculator(sensorArraySize.width(), sensorArraySize.height(), cameraAttrib.getSensorColorFilter());
+
+                //mPreviewProcessor = new PreviewProcessor(this, cameraAttrib, surfaceView, mHandler, mStreamController);
+                mPreviewRawProcessor = new PreviewRawProcessor(cameraAttrib, mHandler, mStreamController, mCameraController);
+                mSnapshotProcessor = new SnapshotProcessor(cameraAttrib, this, mHandler, mStreamController);
+
+                // Open the camera
+                mCameraController.openCamera(mCameraId);
+                mCameraOpened = true;
+                updateCameraButtonStatus();
+            }
+            else {
+                Toast.makeText(getApplicationContext(), "No camera device found.", Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
+    /**
+     * Dump some characteristics of cameras for debugging.
+     * @param cameraList The list of cameras.
+     */
+    private void dumpCameraCharacteristic(ArrayList<CameraController.CameraAttrib> cameraList) {
+        if (cameraList.size() > 0) {
+            for (CameraController.CameraAttrib c : cameraList) {
+                Log.d(TAG, "Camera id: " + c.getCameraId());
+                Log.d(TAG, " LENS FACING: " + c.getLensFacing());
+                Log.d(TAG, " SENSOR ARRAY: " + c.getSensorActiveArraySize());
+            }
+        }
     }
 
     @Override
@@ -418,13 +546,7 @@ public class MainActivity extends AppCompatActivity implements CameraController.
     protected void onResume() {
         super.onResume();
 
-        if (mCameraOpened) {
-            mCameraBtn.setImageDrawable(mIconCameraOn);
-        }
-        else {
-            mCameraBtn.setImageDrawable(mIconCameraOff);
-        }
-
+        updateCameraButtonStatus();
 
         // Hide the navigation bar.
 //        View decorView = getWindow().getDecorView();
@@ -534,14 +656,15 @@ public class MainActivity extends AppCompatActivity implements CameraController.
         }
         else {
             if (mUsingAuxView) {
-//                mCameraController.startLiveView(mSurfaceViewAux.getHolder().getSurface());
                 ArrayList<Surface> surfaceList = new ArrayList<>();
                 surfaceList.add(mSurfaceViewAux.getHolder().getSurface());
                 mCameraController.startLiveView(surfaceList);
             }
             else {
-//                mCameraController.startLiveView(mPreviewProcessor.getSurface());
-                mCameraController.startLiveView(mPreviewRawProcessor.getSurfaces());
+                ArrayList<Surface> surfaceList = new ArrayList<>();
+                surfaceList.add(mPreviewSurface.getHolder().getSurface());
+                surfaceList.addAll(mPreviewRawProcessor.getSurfaceList());
+                mCameraController.startLiveView(surfaceList);
             }
         }
     }
@@ -577,7 +700,7 @@ public class MainActivity extends AppCompatActivity implements CameraController.
     }
 
     @Override
-    public void OnOk(String text, String tag) {
+    public void onOkClick(String text, String tag) {
         if ("ExpTimeInputDialog".equals(tag)) {
             Log.i(TAG, "[exposure time] input string=" + text);
             try {
@@ -604,7 +727,9 @@ public class MainActivity extends AppCompatActivity implements CameraController.
             Log.i(TAG, "Exposure Lines string=" + text);
             try {
                 int lines = Integer.parseInt(text);
-                long exposureTime = Double.valueOf((lines * 1000000000.0) / (812.0 * 30.0)).longValue() + 1L;
+                double frameRate = 30.0;
+                double VTS = 812.0;
+                long exposureTime = Double.valueOf((lines * NANOSECONDS_PER_SECOND) / (VTS * frameRate)).longValue() + 1L;
                 mCameraController.setExposureTime(exposureTime);
             }
             catch (NumberFormatException e) {
@@ -615,7 +740,7 @@ public class MainActivity extends AppCompatActivity implements CameraController.
     }
 
     @Override
-    public void OnCancel(String tag) {
+    public void onCancelClick(String tag) {
 
     }
 
@@ -625,6 +750,18 @@ public class MainActivity extends AppCompatActivity implements CameraController.
         msg.sendToTarget();
 //        Toast.makeText(this, pathname, Toast.LENGTH_SHORT).show();
     }
+
+    /**
+     * The implementation of PreviewRawProcessor.TakeRawCallback
+     */
+    PreviewRawProcessor.TakeRawCallback mTakeRawCallback = new PreviewRawProcessor.TakeRawCallback() {
+        @Override
+        public void onRawReady(byte[] rawData) {
+            mAwbCalculator.calculate(rawData);
+            RggbChannelVector vector = mAwbCalculator.getWbGains();
+            mCameraController.fixedWBGains(vector.getRed(), vector.getBlue());
+        }
+    };
 
     class UpdateExposureTime implements Runnable {
         long mExposureTime;
@@ -653,7 +790,7 @@ public class MainActivity extends AppCompatActivity implements CameraController.
                     (float)mColorTransform[12]/mColorTransform[13], (float)mColorTransform[14]/mColorTransform[15], (float)mColorTransform[16]/mColorTransform[17]
             };
             String info = String.format(Locale.US, " Exp.Time = %.4f ms\n Sensitivity %d\n Frame Cnt. %d", milli_sec, mIso, mFrameNo) +
-                        String.format(Locale.US, "\n R %.2f  Gr %.2f Gb %.2f B %.2f (%s)", mGain[0], mGain[1], mGain[2], mGain[3], CameraInfo.AwbState(mAwbState)) +
+                        String.format(Locale.US, "\n R %.2f  Gr %.2f Gb %.2f B %.2f\n WB %s", mGain[0], mGain[1], mGain[2], mGain[3], CameraInfo.AwbState(mAwbState)) +
                         String.format(Locale.US, "\n %6.4f %6.4f %6.4f", cc[0], cc[1], cc[2]) +
                         String.format(Locale.US, "\n %6.4f %6.4f %6.4f", cc[3], cc[4], cc[5]) +
                         String.format(Locale.US, "\n %6.4f %6.4f %6.4f", cc[6], cc[7], cc[8]);
@@ -675,7 +812,8 @@ public class MainActivity extends AppCompatActivity implements CameraController.
 
     @Override
     public void surfaceCreated(@NonNull SurfaceHolder holder) {
-
+        Log.i(TAG, "[MainActivity] surfaceCreated()");
+        findAndOpenCamera();
     }
 
     @Override
@@ -693,7 +831,7 @@ public class MainActivity extends AppCompatActivity implements CameraController.
 
     @Override
     public void surfaceDestroyed(@NonNull SurfaceHolder holder) {
-        Log.d(TAG, "surfaceDestroyed()");
+        Log.i(TAG, "[MainActivity] surfaceDestroyed()");
     }
 
     @Override
@@ -722,8 +860,13 @@ public class MainActivity extends AppCompatActivity implements CameraController.
             mCameraController.startCameraSession(outputList);
         }
         else {
-//            mCameraController.startCameraSession(mPreviewProcessor.buildOutputList());
-            mCameraController.startCameraSession(mPreviewRawProcessor.buildOutputList());
+            ArrayList<OutputConfiguration> outputList = new ArrayList<>();
+            outputList.add(new OutputConfiguration((mPreviewSurface.getHolder().getSurface())));
+            ArrayList<Surface> surfaceList = mPreviewRawProcessor.getSurfaceList();
+            for (Surface s : surfaceList) {
+                outputList.add(new OutputConfiguration(s));
+            }
+            mCameraController.startCameraSession(outputList);
         }
     }
 

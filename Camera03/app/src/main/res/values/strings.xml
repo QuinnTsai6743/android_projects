@@ -7,4 +7,5 @@
     <string name="preview_snapshot_count_key">preview_snapshot_count</string>
     <string name="camera">camera</string>
     <string name="restore">restore</string>
+    <string name="scene_mode">Scene Mode</string>
 </resources>
