@@ -44,6 +44,7 @@ import android.widget.Toast;
 
 import com.google.android.material.slider.Slider;
 import com.google.android.material.snackbar.Snackbar;
+import com.med.util.WBCalibration;
 
 import org.jetbrains.annotations.NotNull;
 
@@ -117,7 +118,7 @@ public class MainActivity extends AppCompatActivity implements CameraController.
 //    private Screenshot mPreviewSnapshot;
     private StreamController mStreamController;
 
-    private AWBCalculator mAwbCalculator;
+    private WBCalibration mAwbCalculator;
 
     private Handler mHandler;
     private Handler mUiHandler;
@@ -496,7 +497,7 @@ public class MainActivity extends AppCompatActivity implements CameraController.
                 cameraAttrib.dumpDistortionCorrectionMode();
 
                 Rect sensorArraySize = cameraAttrib.getSensorActiveArraySize();
-                mAwbCalculator = new AWBCalculator(sensorArraySize.width(), sensorArraySize.height(), cameraAttrib.getSensorColorFilter());
+                mAwbCalculator = new WBCalibration(sensorArraySize.width(), sensorArraySize.height(), cameraAttrib.getSensorColorFilter());
 
                 //mPreviewProcessor = new PreviewProcessor(this, cameraAttrib, surfaceView, mHandler, mStreamController);
                 mPreviewRawProcessor = new PreviewRawProcessor(cameraAttrib, mHandler, mStreamController, mCameraController);
@@ -757,9 +758,8 @@ public class MainActivity extends AppCompatActivity implements CameraController.
     PreviewRawProcessor.TakeRawCallback mTakeRawCallback = new PreviewRawProcessor.TakeRawCallback() {
         @Override
         public void onRawReady(byte[] rawData) {
-            mAwbCalculator.calculate(rawData);
-            RggbChannelVector vector = mAwbCalculator.getWbGains();
-            mCameraController.fixedWBGains(vector.getRed(), vector.getBlue());
+            mAwbCalculator.calibrate(rawData);
+            mCameraController.fixedWBGains(mAwbCalculator.getGainR(), mAwbCalculator.getGainB());
         }
     };
 
