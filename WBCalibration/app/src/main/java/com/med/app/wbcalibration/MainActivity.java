@@ -33,13 +33,15 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.google.android.material.snackbar.Snackbar;
-import com.med.util.WBCalibration;
+import com.med.hpframework.util.WBCalibration;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Locale;
 
-public class MainActivity extends AppCompatActivity implements CameraController.StateCallback, SurfaceHolder.Callback, ImageReader.OnImageAvailableListener {
+public class MainActivity extends AppCompatActivity implements
+        CameraController.StateCallback, SurfaceHolder.Callback, ImageReader.OnImageAvailableListener,
+        WBCalibration.ResultCallback {
     private static final String TAG = "WBCalibration";
     private static final int REQUEST_PERMISSIONS_REQUEST_CODE = 34;
 
@@ -286,8 +288,7 @@ public class MainActivity extends AppCompatActivity implements CameraController.
                         Image.Plane[] planes = img.getPlanes();
                         byte[] byteRaw = readBytes(planes[0]);
                         if (mWbCalibration != null) {
-                            mWbCalibration.calibrate(byteRaw);
-                            mCameraController.fixedWBGains(mWbCalibration.getGainR(), mWbCalibration.getGainB());
+                            mWbCalibration.calibrate(byteRaw, this);
                         }
                     }
                     mCalibrateWB = false;
@@ -295,5 +296,10 @@ public class MainActivity extends AppCompatActivity implements CameraController.
                 img.close();
             }
         }
+    }
+
+    @Override
+    public void onCalibrationDone(float gainR, float gainB) {
+        mCameraController.fixedWBGains(gainR, gainB);
     }
 }
