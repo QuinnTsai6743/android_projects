@@ -22,7 +22,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.util.Log;
-import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
@@ -40,30 +39,26 @@ import java.util.ArrayList;
 import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity implements
-        CameraController.StateCallback, SurfaceHolder.Callback, ImageReader.OnImageAvailableListener,
-        WBCalibration.ResultCallback {
-    private static final String TAG = "WBCalibration";
+        ImageReader.OnImageAvailableListener,
+        CameraController.StateCallback,
+        SurfaceHolder.Callback,
+        CameraController.WBCResultListener {
+    private static final String TAG = IConstant.TAG;
     private static final int REQUEST_PERMISSIONS_REQUEST_CODE = 34;
 
     private SurfaceView mPreviewSurface;
+    private ImageReader mImageReader;
     private TextView mTextView;
+
     private Handler mHandler;
 
     private CameraController mCameraController;
-
-    private WBCalibration mWbCalibration;
-
-    private ImageReader mImageReader;
-    private boolean mCalibrateWB = false;
+    private boolean mCalibrationRunning = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
-
-        HandlerThread handlerThread = new HandlerThread("Aux Thread");
-        handlerThread.start();
-        mHandler = new Handler(handlerThread.getLooper());
 
         setContentView(R.layout.activity_main);
 
@@ -74,13 +69,23 @@ public class MainActivity extends AppCompatActivity implements
         mCameraController = new CameraController(this);
         mCameraController.setCaptureCallback(mCaptureCallback);
 
-        // Create WB button
+        // set button click listener
         ImageButton wbBtn = findViewById(R.id.WBCalibrateBtn);
-        wbBtn.setOnClickListener(v -> mCalibrateWB = true);
+        wbBtn.setOnClickListener(v -> startWBCalibration(1));
+
+        ImageButton wbBtn2 = findViewById(R.id.WBCalibrationBtn2);
+        wbBtn2.setOnClickListener(v -> startWBCalibration(2));
+
+        ImageButton wbBtn3 = findViewById(R.id.WBCalibrationBtn3);
+        wbBtn3.setOnClickListener(v -> startWBCalibration(3));
 
         if (needToGrantCameraPermissions()) {
             requestCameraPermissions();
         }
+
+        HandlerThread thread = new HandlerThread("aux thread");
+        thread.start();
+        mHandler = new Handler(thread.getLooper());
     }
 
     /**
@@ -141,13 +146,17 @@ public class MainActivity extends AppCompatActivity implements
                 }
 
                 String selectedCameraId = cameraIdList.get(0);
-                CameraCharacteristicsWrapper wrapper = new CameraCharacteristicsWrapper(mCameraController.getCameraCharacteristics(selectedCameraId));
-                Rect sensorArraySize = wrapper.getSensorActiveArraySize();
-                mWbCalibration = new WBCalibration(sensorArraySize.width(), sensorArraySize.height(), wrapper.getSensorColorFilter());
-                mImageReader = ImageReader.newInstance(sensorArraySize.width(), sensorArraySize.height(), ImageFormat.RAW_SENSOR, 4);
+                CameraCharacteristics characteristics = mCameraController.getCameraCharacteristics(selectedCameraId);
+                Rect rect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+                int colorFilter = characteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT);
+                mImageReader = ImageReader.newInstance(rect.width(), rect.height(), ImageFormat.RAW_SENSOR, 4);
                 mImageReader.setOnImageAvailableListener(this, mHandler);
+                mWBCalibration = new WBCalibration(rect.width(), rect.height(), colorFilter);
+                ArrayList<OutputConfiguration> outputList = new ArrayList<>();
+                outputList.add(new OutputConfiguration(mPreviewSurface.getHolder().getSurface()));
+                outputList.add(new OutputConfiguration(mImageReader.getSurface()));
 
-                mCameraController.openCamera(selectedCameraId);
+                mCameraController.openCamera(selectedCameraId, outputList);
             }
             else {
                 Toast.makeText(this, "No camera device found.", Toast.LENGTH_LONG).show();
@@ -169,13 +178,6 @@ public class MainActivity extends AppCompatActivity implements
         }
     }
 
-    private void createLiveViewSession() {
-        ArrayList<OutputConfiguration> outputList = new ArrayList<>();
-        outputList.add(new OutputConfiguration(mPreviewSurface.getHolder().getSurface()));
-        outputList.add(new OutputConfiguration(mImageReader.getSurface()));
-        mCameraController.createCaptureSession(outputList);
-    }
-
     /**
      * To get byte[] from Image plane.
      * @param plane The Image plane.
@@ -189,6 +191,8 @@ public class MainActivity extends AppCompatActivity implements
         return bytes;
     }
 
+    private int mIso;
+    private long mExposrueTime;
     private String mCaptureInfo;
     private final CameraCaptureSession.CaptureCallback mCaptureCallback = new CameraCaptureSession.CaptureCallback() {
         @Override
@@ -198,6 +202,11 @@ public class MainActivity extends AppCompatActivity implements
             if (frameNo % 10 == 0) {
                 long exposureTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
                 int iso = result.get(CaptureResult.SENSOR_SENSITIVITY);
+                Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
+                if (aeState != null && aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED) {
+                    mIso = iso;
+                    mExposrueTime = exposureTime;
+                }
                 RggbChannelVector wbGains = result.get(CaptureResult.COLOR_CORRECTION_GAINS);
                 mCaptureInfo = String.format(Locale.US, "frame: %d\n", frameNo) +
                         String.format(Locale.US, "Exp. time: %f ms\n", exposureTime / 1000000.0f) +
@@ -230,11 +239,6 @@ public class MainActivity extends AppCompatActivity implements
     }
 
     @Override
-    public void onCameraOpened() {
-        createLiveViewSession();
-    }
-
-    @Override
     public void onCameraDisconnected() {
         Toast.makeText(this, "Camera Disconnected.", Toast.LENGTH_LONG).show();
     }
@@ -242,14 +246,6 @@ public class MainActivity extends AppCompatActivity implements
     @Override
     public void onCameraError(int error) {
         Toast.makeText(this, String.format(Locale.US, "Camera error. (error code %d", error), Toast.LENGTH_LONG).show();
-    }
-
-    @Override
-    public void onSessionConfigured() {
-        ArrayList<Surface> surfaceList = new ArrayList<>();
-        surfaceList.add(mPreviewSurface.getHolder().getSurface());
-        surfaceList.add(mImageReader.getSurface());
-        mCameraController.startLiveView(surfaceList);
     }
 
     @Override
@@ -277,29 +273,55 @@ public class MainActivity extends AppCompatActivity implements
 
     }
 
-    @Override
-    public void onImageAvailable(ImageReader reader) {
-        synchronized (this) {
-            Image img = reader.acquireLatestImage();
-            if (img != null) {
-                if (mCalibrateWB) {
-                    int imageFormat = img.getFormat();
-                    if (imageFormat == ImageFormat.RAW_SENSOR) {
-                        Image.Plane[] planes = img.getPlanes();
-                        byte[] byteRaw = readBytes(planes[0]);
-                        if (mWbCalibration != null) {
-                            mWbCalibration.calibrate(byteRaw, this);
-                        }
-                    }
-                    mCalibrateWB = false;
-                }
-                img.close();
+    /**
+     * Start the white-balance calibration.
+     */
+    private void startWBCalibration(int type) {
+        if (!mCalibrationRunning) {
+            mCalibrationRunning = true;
+            switch(type)
+            {
+                case 1:
+                    mCameraController.doWBCalibration(mPreviewSurface.getHolder().getSurface(), this);
+                    break;
+                case 2:
+                    mCameraController.doWBCalibration(mIso, mExposrueTime, this);
+                    break;
+                case 3:
+                default:
+                    mCameraController.doWBCalibration(this);
+                    mTakeRaw = true;
+                    break;
             }
         }
     }
 
     @Override
-    public void onCalibrationDone(float gainR, float gainB) {
-        mCameraController.fixedWBGains(gainR, gainB);
+    public void onCalibrationDone() {
+        mCalibrationRunning = false;
+    }
+
+    @Override
+    public void onCalibrationFailed(String errMessage) {
+        Log.e(TAG, "===== WB calibration failed =====");
+        mCalibrationRunning = false;
+        Toast.makeText(this, "Camera access permission denied.", Toast.LENGTH_LONG).show();
+    }
+
+    private boolean mTakeRaw = false;
+    private WBCalibration mWBCalibration;
+    @Override
+    public void onImageAvailable(ImageReader reader) {
+        synchronized (this) {
+            Image img = reader.acquireLatestImage();
+            if (img != null) {
+                int format = img.getFormat();
+                if (mTakeRaw && format == ImageFormat.RAW_SENSOR) {
+                    Image.Plane[] planes = img.getPlanes();
+                    mWBCalibration.calibrate(readBytes(planes[0]), mCameraController);
+                }
+                img.close();
+            }
+        }
     }
 }

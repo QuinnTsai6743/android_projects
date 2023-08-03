@@ -1,6 +1,7 @@
 package com.med.app.wbcalibration;
 
 import android.content.Context;
+import android.graphics.Rect;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -18,22 +19,21 @@ import android.view.Surface;
 
 import androidx.annotation.NonNull;
 
+import com.med.hpframework.util.WBCalibration;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.concurrent.Executor;
 
-public class CameraController implements Executor {
-
+public class CameraController implements ICameraControl, WBCalibration.ResultCallback {
     interface StateCallback {
-        void onCameraOpened();
         void onCameraDisconnected();
         void onCameraError(int error);
-        void onSessionConfigured();
         void onSessionConfigureFailed();
         void onPermissionDenied();
     }
 
-    private static final String TAG = "WBCalibration";
+    private static final String TAG = IConstant.TAG;
     private static final long CAMERA_CLOSE_TIMEOUT = 2000; // milliseconds
 
     /**
@@ -42,12 +42,19 @@ public class CameraController implements Executor {
     private String mCameraId;
     private CameraManager mCameraManager = null;
     private CameraDevice mCameraDevice = null;
-    private CameraCaptureSession mCameraSession;
+    private CameraCaptureSession mCameraSession = null;
+    private ArrayList<OutputConfiguration> mOutputList;
 
     private final ConditionVariable mCloseWaiter = new ConditionVariable();
 
     private final Handler mHandler;
     private final StateCallback mStateCallback;
+    private final Executor mExecutor = new Executor() {
+        @Override
+        public void execute(Runnable command) {
+            mHandler.post(command);
+        }
+    };
 
     private boolean mFixedWbGains = false;
     private RggbChannelVector mWbGains;
@@ -60,7 +67,7 @@ public class CameraController implements Executor {
         @Override
         public void onOpened(@NonNull CameraDevice camera) {
             mCameraDevice = camera;
-            mStateCallback.onCameraOpened();
+            startLiveViewSession();
         }
 
         @Override
@@ -93,13 +100,18 @@ public class CameraController implements Executor {
             mCameraSession = session;
             mHandler.post(() -> {
                 if (mCameraDevice != null) {
-                    mStateCallback.onSessionConfigured();
+                    ArrayList<Surface> surfaceList = new ArrayList<>();
+                    for (OutputConfiguration o : mOutputList) {
+                        surfaceList.add(o.getSurface());
+                    }
+                    startLiveView(surfaceList);
                 }
             });
         }
 
         @Override
         public void onConfigureFailed(@NonNull CameraCaptureSession session) {
+            Log.e(TAG, "!!! session configure failed.");
             if (mCameraDevice != null) {
                 mCameraDevice.close();
             }
@@ -108,7 +120,7 @@ public class CameraController implements Executor {
         }
     };
 
-    private CameraCaptureSession.CaptureCallback mCaptureCallback = null;
+    private CameraCaptureSession.CaptureCallback mCaptureCallback;
 
     /**
      * Constructor of CameraController.
@@ -152,8 +164,15 @@ public class CameraController implements Executor {
         return cameraIdList;
     }
 
-    public void openCamera(String cameraId) throws SecurityException {
+    /**
+     * Open the camera device and create a capture session.
+     * @param cameraId The id of the target camera device.
+     * @param outputList The list contained the output surface.
+     * @throws SecurityException Thrown if camera access permission is not granted.
+     */
+    public void openCamera(String cameraId, ArrayList<OutputConfiguration> outputList) throws SecurityException {
         mCameraId = cameraId;
+        mOutputList = outputList;
         mHandler.post(() -> {
            if (mCameraDevice != null) {
                throw new IllegalStateException("Camera already open");
@@ -189,16 +208,11 @@ public class CameraController implements Executor {
 
     /**
      * To create a capture session.
-     * @param outputList The list contained output configurations.
      */
-    public void createCaptureSession(ArrayList<OutputConfiguration> outputList) {
+    @Override
+    public void createCaptureSession(SessionConfiguration config) {
         if (mCameraDevice != null) {
             try {
-                SessionConfiguration config = new SessionConfiguration(
-                        SessionConfiguration.SESSION_REGULAR,
-                        outputList,
-                        this,
-                        mCameraSessionListener);
                 mCameraDevice.createCaptureSession(config);
             } catch (CameraAccessException e) {
                 e.printStackTrace();
@@ -207,6 +221,11 @@ public class CameraController implements Executor {
                 mStateCallback.onPermissionDenied();
             }
         }
+    }
+
+    @Override
+    public CaptureRequest.Builder getBuilder(int templateType) throws CameraAccessException {
+        return mCameraDevice.createCaptureRequest(templateType);
     }
 
     class LiveViewCreator implements Runnable {
@@ -231,6 +250,7 @@ public class CameraController implements Executor {
                 else {
                     builder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_OFF);
                     builder.set(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX);
+                    Log.d(TAG, String.format("WB gains: %f, %f", mWbGains.getRed(), mWbGains.getBlue()));
                     builder.set(CaptureRequest.COLOR_CORRECTION_GAINS, mWbGains);
                 }
 
@@ -252,22 +272,13 @@ public class CameraController implements Executor {
         mHandler.post(mLiveViewCreator);
     }
 
-    /**
-     * Using fixed WB gains.
-     * @param gainR R gain.
-     * @param gainB B gain.
-     */
-    public void fixedWBGains(float gainR, float gainB) {
-        mFixedWbGains = true;
-        mWbGains = new RggbChannelVector(gainR, 1.0f, 1.0f, gainB);
-        startLiveView();
-    }
-
-    /**
-     * Enable auto white balance.
-     */
-    public void autoWB() {
-        mFixedWbGains = false;
+    private void startLiveViewSession() {
+        SessionConfiguration config = new SessionConfiguration(
+                SessionConfiguration.SESSION_REGULAR,
+                mOutputList,
+                mExecutor,
+                mCameraSessionListener);
+        createCaptureSession(config);
     }
 
     /**
@@ -287,8 +298,60 @@ public class CameraController implements Executor {
         return characteristics;
     }
 
+    /**
+     * Interface definition for a callback to provide result.
+     */
+    interface WBCResultListener {
+        void onCalibrationDone();
+        void onCalibrationFailed(String errMessage);
+    }
+    private WBCResultListener mResultListener;
+
+    /**
+     * Execute white-balance calibration.
+     * The new R/B gain will be applied if calibration is success.
+     * @param previewSurface The preview surface.
+     * @param listener A callback listener.
+     */
+    public void doWBCalibration(Surface previewSurface, WBCResultListener listener) {
+        CameraCharacteristics characteristics = getCameraCharacteristics(mCameraId);
+        Rect rect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+        int colorFilter = characteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT);
+
+        mResultListener = listener;
+        WBCController1 controller1 = new WBCController1(rect.width(), rect.height(), colorFilter);
+        controller1.startCalibration(previewSurface, this, this);
+    }
+
+    /**
+     * Execute white-balance calibration.
+     * @param iso The ISO value for calibration.
+     * @param exposureTime The exposure time for calibration.
+     * @param listener The callback listener.
+     */
+    public void doWBCalibration(int iso, long exposureTime, WBCResultListener listener) {
+        CameraCharacteristics characteristics = getCameraCharacteristics(mCameraId);
+        Rect rect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+        int colorFilter = characteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT);
+
+        mResultListener = listener;
+        WBCController2 controller2 = new WBCController2(rect.width(), rect.height(), colorFilter, this);
+        controller2.startCalibration(iso, exposureTime, this);
+    }
+
+    /**
+     * Execute white-balance calibration.
+     * @param listener The result listener.
+     */
+    public void doWBCalibration(WBCResultListener listener) {
+        mResultListener = listener;
+    }
+
     @Override
-    public void execute(Runnable command) {
-        mHandler.post(command);
+    public void onCalibrationDone(float gainR, float gainB) {
+        mFixedWbGains = true;
+        mWbGains = new RggbChannelVector(gainR, 1.0f, 1.0f, gainB);
+        startLiveViewSession();
+        mResultListener.onCalibrationDone();
     }
 }
