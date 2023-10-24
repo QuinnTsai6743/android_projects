@@ -8,4 +8,12 @@
     <string name="camera">camera</string>
     <string name="restore">restore</string>
     <string name="scene_mode">Scene Mode</string>
+    <string name="noise_reduction">NR</string>
+    <string name="white_balance">WB</string>
+    <string name="brightness">Brightness</string>
+    <string name="contrast">Contrast</string>
+    <string name="saturation">Saturation</string>
+    <string name="live_view">Live View</string>
+    <string name="black_background">Black</string>
+    <string name="noise_reduction_level">NR Level</string>
 </resources>

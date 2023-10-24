@@ -11,7 +11,7 @@ public class ExposureTimeHandler implements View.OnClickListener, InputDialog.Ev
     private final long NANOSECONDS_PER_SECOND = 1000000000;
     private final long NANOSECONDS_PER_MILLISECOND = 1000000;
     private double mFrameRate = 30.0;
-    private int mVTS = 462;
+    private int mVTS = 732;
 
     public void setCameraControl(ICameraControl cameraControl) {
         mCameraControl = cameraControl;

@@ -118,6 +118,18 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction, I
             }
         }
 
+        public void dumpExposureMeteringModes() {
+            int[] modes = mCharacteristics.get(mExposureMeteringKey);
+            if (modes != null) {
+                Log.d(TAG, String.format("Num of Metering Modes: %d", modes.length));
+                StringBuilder builder = new StringBuilder("Metering Modes: ");
+                for (int m : modes) {
+                    builder.append(String.format(Locale.US, "%d ", m));
+                }
+                Log.d(TAG, builder.toString());
+            }
+        }
+
         public Range<Integer> getSensitivityRange() {
             return mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE);
         }
@@ -175,7 +187,7 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction, I
     private final StateCallback mCallback;
 
     private Integer mEdgeMode = CaptureRequest.EDGE_MODE_OFF;
-    private Integer mNoiseReductionMode = CaptureRequest.NOISE_REDUCTION_MODE_OFF;
+    private Integer mNoiseReductionMode = CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY;
 
     private boolean mFixedWBGains = false;
     private RggbChannelVector mWbGains;
@@ -196,8 +208,19 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction, I
 
     private int mSaturationLevel = 5;
     private static final CaptureRequest.Key<int[]> mUseSaturationKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.saturation.use_saturation", int[].class);
+    private static final CaptureRequest.Key<int[]> mSaturationRangeKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.saturation.range", int[].class);
 
     private static final CaptureRequest.Key<int[]> mContrastLevelKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.contrast.level", int[].class);
+
+    private static final CameraCharacteristics.Key<int[]> mExposureMeteringKey = new CameraCharacteristics.Key<>("org.codeaurora.qcamera3.exposure_metering.available_modes", int[].class);
+
+    private static final CaptureRequest.Key<int[]> mExposureMeteringModeKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.exposure_metering.exposure_metering_mode", int[].class);
+
+    private float mAnrIntensity = 0.0f;
+    private static final CaptureRequest.Key<float[]> mAnrIntensityKey = new CaptureRequest.Key<>("org.quic.camera.anr_tuning.anr_intensity", float[].class);
+    private float mAnrMotionSensitivity = 0.0f;
+    private static final CaptureRequest.Key<float[]> mAnrMotionSensitivityKey = new CaptureRequest.Key<>("org.quic.camera.anr_tuning.anr_motion_sensitivity", float[].class);
+
 
     CameraController(StateCallback callback) {
         HandlerThread cameraThread = new HandlerThread("cameraThread");
@@ -405,11 +428,11 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction, I
             // Test EIS and LDC
             CaptureRequest.Builder builder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
 
-            CaptureRequest.Key<int[]> EisEnableKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.sessionParameters.EisEnable", int[].class);
-            builder.set(EisEnableKey, new int [] {1});
+//            CaptureRequest.Key<int[]> EisEnableKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.sessionParameters.EisEnable", int[].class);
+//            builder.set(EisEnableKey, new int [] {1});
 
-            CaptureRequest.Key<int []> LdcEnableKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.sessionParameters.LDCEnable", int[].class);
-            builder.set(LdcEnableKey, new int [] {1});
+//            CaptureRequest.Key<int []> LdcEnableKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.sessionParameters.LDCEnable", int[].class);
+//            builder.set(LdcEnableKey, new int [] {1});
 
             config.setSessionParameters(builder.build());
 
@@ -499,6 +522,8 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction, I
         builder.set(CaptureRequest.EDGE_MODE, mEdgeMode);
         // noise reduction mode
         builder.set(CaptureRequest.NOISE_REDUCTION_MODE, mNoiseReductionMode);
+        builder.set(mAnrIntensityKey, new float[] {mAnrIntensity});
+        builder.set(mAnrMotionSensitivityKey, new float[] {mAnrMotionSensitivity});
 
         // Tone Map Curve
         builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE);
@@ -517,6 +542,9 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction, I
 //
 //        CaptureRequest.Key<int []> LdcEnableKey = new CaptureRequest.Key<>("org.codeaurora.qcamera3.sessionParameters.LDCEnable", int[].class);
 //        builder.set(LdcEnableKey, new int [] {0});
+
+        // Exposure Metering Mode
+//        builder.set(mExposureMeteringModeKey, new int [] {1});
     }
 
     class LiveViewRunnable implements Runnable {
@@ -900,6 +928,19 @@ public class CameraController implements Executor, IEdgeMode, INoiseReduction, I
     public String[] getSupportNoiseReductionMode() {
 //        return mNoiseReductionMap.keySet().toArray(new String[0]);
         return new String[]{"OFF", "FAST", "HIGH_QUALITY", "MINIMAL", "ZERO_SHUTTER_LAG"};
+    }
+
+    public void setNoiseReduction(boolean enable) {
+        mNoiseReductionMode = (enable)? CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY : CaptureRequest.NOISE_REDUCTION_MODE_OFF;
+        buildAndSendLiveViewRequest();
+    }
+
+    public void setNoiseReductionLevel(float value) {
+        Log.d(TAG, String.format("[CameraControl] NR level=%f", value));
+        mAnrIntensity = (value * 20.0f) / 16.0f;
+        mAnrMotionSensitivity = (value * 10.0f) / 8.0f;
+        Log.d(TAG, String.format("[CameraControl] ANR intensity=%f, motion sensitivity=%f", mAnrIntensity, mAnrMotionSensitivity));
+        buildAndSendLiveViewRequest();
     }
 
     public void fixedWBGains(float gainR, float gainB) {

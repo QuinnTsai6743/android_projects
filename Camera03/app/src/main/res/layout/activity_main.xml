@@ -12,6 +12,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:src="@color/black"
+        android:contentDescription="@string/black_background"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintRight_toRightOf="parent"
         />
@@ -100,8 +101,8 @@
         android:id="@+id/btn5"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:src="@drawable/ic_baseline_photo_filter_24"
-        android:contentDescription="@string/scene_mode"
+        android:src="@drawable/ic_baseline_wb_auto_24"
+        android:contentDescription="@string/white_balance"
         app:layout_constraintBottom_toTopOf="@id/btn1_2"
         app:layout_constraintLeft_toRightOf="@id/btn2"
         />
@@ -114,39 +115,110 @@
         app:layout_constraintLeft_toLeftOf="parent"
         >
     </Spinner>
-    <com.google.android.material.slider.Slider
-        android:id="@+id/saturationSlider"
-        android:layout_width="100sp"
-        android:layout_height="30sp"
-        android:valueFrom="0.0"
-        android:valueTo="10.0"
-        android:stepSize="1.0"
-        app:thumbRadius="4sp"
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/sliderContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@color/dark_gray"
+        app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintRight_toRightOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/exposureTimeContainer"
-        />
-    <com.google.android.material.slider.Slider
-        android:id="@+id/contrastSlider"
-        android:layout_width="100sp"
-        android:layout_height="30sp"
-        android:valueFrom="-4.0"
-        android:valueTo="4.0"
-        android:stepSize="1.0"
-        app:thumbRadius="4sp"
-        app:layout_constraintRight_toRightOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/saturationSlider"
-        />
-    <com.google.android.material.slider.Slider
-        android:id="@+id/brightnessSlider"
-        android:layout_width="100sp"
-        android:layout_height="30sp"
-        android:valueFrom="0.0"
-        android:valueTo="30.0"
-        android:stepSize="3.0"
-        app:thumbRadius="4sp"
-        app:layout_constraintRight_toRightOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/contrastSlider"
-        />
+        android:scaleX="0.6"
+        android:scaleY="0.6"
+    >
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/noiseReductionSwitch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/noise_reduction"
+            android:textColor="@color/white"
+            android:checked="true"
+            app:layout_constraintRight_toRightOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            android:scaleX="0.5"
+            android:scaleY="0.5"
+            />
+        <TextView
+            android:id="@+id/noiseReductionText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/noise_reduction_level"
+            android:textColor="@color/white"
+            android:textSize="11sp"
+            app:layout_constraintLeft_toLeftOf="@id/noiseReductionSlider"
+            app:layout_constraintTop_toTopOf="@id/noiseReductionSlider"
+            />
+        <com.google.android.material.slider.Slider
+            android:id="@+id/noiseReductionSlider"
+            android:layout_width="120sp"
+            android:layout_height="30sp"
+            android:valueFrom="0.0"
+            android:valueTo="10.0"
+            android:stepSize="1.0"
+            app:thumbRadius="5sp"
+            app:layout_constraintRight_toRightOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/noiseReductionSwitch"
+            />
+        <TextView
+            android:id="@+id/saturationText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/saturation"
+            android:textColor="@color/white"
+            android:textSize="11sp"
+            app:layout_constraintLeft_toLeftOf="@id/saturationSlider"
+            app:layout_constraintTop_toTopOf="@id/saturationSlider"/>
+        <com.google.android.material.slider.Slider
+            android:id="@+id/saturationSlider"
+            android:layout_width="120sp"
+            android:layout_height="30sp"
+            android:valueFrom="0.0"
+            android:valueTo="10.0"
+            android:stepSize="1.0"
+            app:thumbRadius="5sp"
+            app:layout_constraintRight_toRightOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/contrastSlider"
+            />
+        <TextView
+            android:id="@+id/contrastText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/contrast"
+            android:textColor="@color/white"
+            android:textSize="11sp"
+            app:layout_constraintTop_toTopOf="@id/contrastSlider"
+            app:layout_constraintLeft_toLeftOf="@id/contrastSlider"/>
+        <com.google.android.material.slider.Slider
+            android:id="@+id/contrastSlider"
+            android:layout_width="120sp"
+            android:layout_height="30sp"
+            android:valueFrom="-4.0"
+            android:valueTo="4.0"
+            android:stepSize="1.0"
+            app:thumbRadius="5sp"
+            app:layout_constraintRight_toRightOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/brightnessSlider"
+            />
+        <TextView
+            android:id="@+id/brightnessText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/brightness"
+            android:textColor="@color/white"
+            android:textSize="11sp"
+            app:layout_constraintLeft_toLeftOf="@id/brightnessSlider"
+            app:layout_constraintTop_toTopOf="@id/brightnessSlider"/>
+        <com.google.android.material.slider.Slider
+            android:id="@+id/brightnessSlider"
+            android:layout_width="120sp"
+            android:layout_height="30sp"
+            android:valueFrom="0.0"
+            android:valueTo="30.0"
+            android:stepSize="3.0"
+            app:thumbRadius="5sp"
+            app:layout_constraintRight_toRightOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/noiseReductionSlider"
+            />
+    </androidx.constraintlayout.widget.ConstraintLayout>
     <Spinner
         android:id="@+id/edgeMode"
         android:layout_width="wrap_content"
@@ -155,14 +227,14 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintLeft_toRightOf="@id/btn1">
     </Spinner>
-    <Spinner
+    <!--Spinner
         android:id="@+id/noiseReduction"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:spinnerMode="dropdown"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintLeft_toRightOf="@id/edgeMode">
-    </Spinner>
+    </Spinner-->
     <TextView
         android:id="@+id/text1"
         android:layout_width="wrap_content"

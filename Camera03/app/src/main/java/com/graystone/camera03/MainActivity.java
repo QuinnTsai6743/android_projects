@@ -2,6 +2,7 @@ package com.graystone.camera03;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.SwitchCompat;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.res.ResourcesCompat;
 
@@ -195,14 +196,22 @@ public class MainActivity extends AppCompatActivity implements CameraController.
         // **********
         // Brightness Slider
         Slider brightnessSlider = findViewById(R.id.brightnessSlider);
-        String brightnessSliderName = getResources().getResourceEntryName(brightnessSlider.getId());
-        mSliderListener.addHandleFunction(brightnessSliderName, value -> {
+        mSliderListener.addHandleFunction(getResources().getResourceEntryName(brightnessSlider.getId()), value -> {
             int level = Float.valueOf(value).intValue();
             Log.d(TAG, "Brightness level=" + level);
             mCameraController.setBrightnessLevel(level);
         });
         brightnessSlider.setValue(0.0f);
         brightnessSlider.addOnChangeListener(mSliderListener);
+
+        // **********
+        // Noise Reduction Slider
+        Slider noiseReductionSlider = findViewById(R.id.noiseReductionSlider);
+        mSliderListener.addHandleFunction(getResources().getResourceEntryName(noiseReductionSlider.getId()), value -> {
+//            Log.d(TAG, String.format("Noise Reduction level=%f", value));
+            mCameraController.setNoiseReductionLevel(value);
+        });
+        noiseReductionSlider.addOnChangeListener(mSliderListener);
 
         createButtons();
 
@@ -238,9 +247,9 @@ public class MainActivity extends AppCompatActivity implements CameraController.
         new EdgeModeHandler(findViewById(R.id.edgeMode),
                 new ArrayAdapter<CharSequence>(this, R.layout.spinner_item, mCameraController.getSupportEdgeMode()),
                 mCameraController);
-        new NoiseReductionHandler(findViewById(R.id.noiseReduction),
-                new ArrayAdapter<CharSequence>(this, R.layout.spinner_item, mCameraController.getSupportNoiseReductionMode()),
-                mCameraController);
+//        new NoiseReductionHandler(findViewById(R.id.noiseReduction),
+//                new ArrayAdapter<CharSequence>(this, R.layout.spinner_item, mCameraController.getSupportNoiseReductionMode()),
+//                mCameraController);
 
         if (!checkCameraPermissions()) {
             requestCameraPermissions();
@@ -435,6 +444,20 @@ public class MainActivity extends AppCompatActivity implements CameraController.
 
         ImageView expDec = findViewById(R.id.btnExpDec);
         expDec.setOnClickListener(mExpTimeHandler);
+
+        // Noise Reduction Switch
+        SwitchCompat noiseReductionSwitch = (SwitchCompat) findViewById(R.id.noiseReductionSwitch);
+        noiseReductionSwitch.setOnClickListener(
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        SwitchCompat noiseReductionSwitch = (SwitchCompat) v;
+                        boolean enable = noiseReductionSwitch.isChecked();
+                        Log.d(TAG, String.format("NR enabled: %b", enable));
+                        mCameraController.setNoiseReduction(enable);
+                    }
+                });
+
     }
 
     private void updateCameraButtonStatus() {
@@ -524,6 +547,7 @@ public class MainActivity extends AppCompatActivity implements CameraController.
                 Log.d(TAG, "Camera id: " + c.getCameraId());
                 Log.d(TAG, " LENS FACING: " + c.getLensFacing());
                 Log.d(TAG, " SENSOR ARRAY: " + c.getSensorActiveArraySize());
+                c.dumpExposureMeteringModes();
             }
         }
     }
